@@ -1,4 +1,7 @@
-use stack_future::{CreateError, StackFuture};
+use std::sync::OnceLock;
+
+use stack_future::{CreateError, StackFuture, StackFutureSend};
+use static_assertions::{assert_impl_all, assert_not_impl_any};
 
 async fn simple() -> u64 {
     42
@@ -25,10 +28,11 @@ async fn large_align() -> u64 {
         // we need a yield point so the buffer moves into the actual future
         tokio::time::sleep(std::time::Duration::from_micros(10)).await;
     }
-    let sum = buffer.buffer.iter().map(|&x| x as u64).sum();
-    sum
+    
+    buffer.buffer.iter().map(|&x| x as u64).sum()
 }
 
+/// Tests that the wrapped futures work, and also that they fail if size or alignment is wrong.
 #[tokio::test]
 async fn smoke_test() {
     let result = StackFuture::<_, 32>::new(simple()).unwrap().await;
@@ -46,3 +50,17 @@ async fn smoke_test() {
         "Expected error for misaligned future"
     );
 }
+
+static GLOBAL_TASK: OnceLock<StackFutureSend<'static, u64, 128>> = OnceLock::new();
+
+/// Test that the the static lifetime future is properly captured.
+#[tokio::test]
+async fn static_future_test() {
+    let future = StackFutureSend::<_, 128>::new(simple()).unwrap();
+    // This fails to compile with vtable: &'a VTable<T> because StackFuture<'static, i32, 128> is not 'static.
+    GLOBAL_TASK.set(future).unwrap();
+}
+
+assert_not_impl_any!(StackFuture<'static, u64, 128>: Send, Unpin);
+assert_impl_all!(StackFutureSend<'static, u64, 128>: Send);
+assert_not_impl_any!(StackFutureSend<'static, u64, 128>: Unpin);
