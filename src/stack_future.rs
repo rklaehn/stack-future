@@ -22,7 +22,7 @@ use std::{
     result::Result,
 };
 
-use crate::VTable;
+use crate::{AlignedBuffer, VTable};
 
 #[derive(Debug)]
 pub enum CreateError {
@@ -53,13 +53,6 @@ impl fmt::Display for CreateError {
 }
 
 impl std::error::Error for CreateError {}
-
-// A wrapper to enforce coarse alignment on the buffer.
-#[repr(align(8))]
-struct AlignedBuffer<const N: usize> {
-    // todo: use MaybeUninit to avoid zero-initialization
-    buffer: [u8; N],
-}
 
 /// A stack-allocated future that erases the concrete type of the future.
 ///

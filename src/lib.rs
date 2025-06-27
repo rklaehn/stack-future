@@ -9,9 +9,12 @@ pub use stack_future::{CreateError, LocalStackFuture, StackFuture};
 
 mod small_future;
 pub use small_future::{LocalSmallFuture, SmallFuture};
-// A wrapper to enforce coarse alignment on the buffer.
+/// A wrapper to enforce coarse alignment on the buffer.
+///
+/// todo: is 8 bytes alignment enough?
 #[repr(align(8))]
 struct AlignedBuffer<const N: usize> {
+    // todo: use MaybeUninit to avoid zero-initialization
     buffer: [u8; N],
 }
 
