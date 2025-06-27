@@ -16,20 +16,41 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
+    fmt,
     marker::{PhantomData, PhantomPinned},
     rc::Rc,
     result::Result,
 };
 
-use snafu::Snafu;
-
-#[derive(Debug, Snafu)]
+#[derive(Debug)]
 pub enum CreateError {
-    #[snafu(display("Future size exceeds buffer capacity: {size} > {max_size}"))]
     SizeTooLarge { size: usize, max_size: usize },
-    #[snafu(display("Future alignment exceeds buffer alignment: {alignment} > {expected}",))]
     AlignmentMismatch { alignment: usize, expected: usize },
 }
+
+impl fmt::Display for CreateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CreateError::SizeTooLarge { size, max_size } => {
+                write!(
+                    f,
+                    "Future size exceeds buffer capacity: {size} > {max_size}"
+                )
+            }
+            CreateError::AlignmentMismatch {
+                alignment,
+                expected,
+            } => {
+                write!(
+                    f,
+                    "Future alignment exceeds buffer alignment: {alignment} > {expected}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CreateError {}
 
 // A wrapper to enforce coarse alignment on the buffer.
 #[repr(align(8))]
@@ -42,6 +63,15 @@ struct AlignedBuffer<const N: usize> {
 /// This is the non-Send version of the future.
 #[repr(transparent)]
 pub struct StackFuture<'a, T, const N: usize>(StackFutureImpl<'a, T, N>, PhantomData<Rc<()>>);
+
+impl<'a, T, const N: usize> fmt::Debug for StackFuture<'a, T, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StackFuture")
+            .field("size", &size_of::<Self>())
+            .field("alignment", &align_of::<Self>())
+            .finish()
+    }
+}
 
 impl<'a, T, const N: usize> StackFuture<'a, T, N> {
     /// Creates a new stack future from a concrete future.
@@ -124,19 +154,17 @@ impl<'a, T, const N: usize> StackFutureImpl<'a, T, N> {
     pub fn new<F: Future<Output = T> + 'a>(future: F) -> Result<Self, CreateError> {
         // Check if the future fits in the buffer and has compatible alignment.
         if size_of::<F>() > N {
-            return Err(SizeTooLargeSnafu {
+            return Err(CreateError::SizeTooLarge {
                 size: size_of::<F>(),
                 max_size: N,
-            }
-            .build());
+            });
         }
 
         if align_of::<F>() > align_of::<AlignedBuffer<N>>() {
-            return Err(AlignmentMismatchSnafu {
+            return Err(CreateError::AlignmentMismatch {
                 alignment: align_of::<F>(),
                 expected: align_of::<AlignedBuffer<N>>(),
-            }
-            .build());
+            });
         }
 
         // Create the vtable for the future type.

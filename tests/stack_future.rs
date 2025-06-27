@@ -28,7 +28,7 @@ async fn large_align() -> u64 {
         // we need a yield point so the buffer moves into the actual future
         tokio::time::sleep(std::time::Duration::from_micros(10)).await;
     }
-    
+
     buffer.buffer.iter().map(|&x| x as u64).sum()
 }
 
