@@ -188,30 +188,14 @@ enum State<'a, T, const N: usize> {
 impl<'a, T: 'a, const N: usize> State<'a, T, N> {
     fn new<F: Future<Output = T> + 'a>(future: F) -> Self {
         if size_of::<F>() <= N && align_of::<F>() <= align_of::<AlignedBuffer<N>>() {
-            let vtable = &VTable {
-                poll: |ptr, cx| {
-                    let future = unsafe { &mut *(ptr as *mut F) };
-                    unsafe { Pin::new_unchecked(future).poll(cx) }
-                },
-                drop: |ptr| {
-                    unsafe { ptr::drop_in_place(ptr as *mut F) };
-                },
-            };
+            let vtable = VTable::new::<F>();
             let mut buffer = AlignedBuffer { buffer: [0u8; N] };
             unsafe {
                 ptr::write(buffer.buffer.as_mut_ptr() as *mut F, future);
             }
             Self::Inline { buffer, vtable }
         } else {
-            let vtable = &VTable {
-                poll: |ptr, cx| {
-                    let future = unsafe { &mut *(ptr as *mut F) };
-                    unsafe { Pin::new_unchecked(future).poll(cx) }
-                },
-                drop: |ptr| {
-                    unsafe { ptr::drop_in_place(ptr as *mut F) };
-                },
-            };
+            let vtable = VTable::new::<F>();
             let mut buffer = HeapBuffer::new::<F>();
             unsafe {
                 ptr::write(buffer.as_mut_ptr() as *mut F, future);

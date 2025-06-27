@@ -57,6 +57,7 @@ impl std::error::Error for CreateError {}
 // A wrapper to enforce coarse alignment on the buffer.
 #[repr(align(8))]
 struct AlignedBuffer<const N: usize> {
+    // todo: use MaybeUninit to avoid zero-initialization
     buffer: [u8; N],
 }
 
@@ -164,15 +165,7 @@ impl<'a, T, const N: usize> StackFutureImpl<'a, T, N> {
         }
 
         // Create the vtable for the future type.
-        let vtable = &VTable {
-            poll: |ptr, cx| {
-                let future = unsafe { &mut *(ptr as *mut F) };
-                unsafe { Pin::new_unchecked(future).poll(cx) }
-            },
-            drop: |ptr| {
-                unsafe { ptr::drop_in_place(ptr as *mut F) };
-            },
-        };
+        let vtable = VTable::new::<F>();
 
         // Initialize the buffer with zeros.
         let mut buffer = AlignedBuffer { buffer: [0u8; N] };
