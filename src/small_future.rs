@@ -12,11 +12,7 @@ use std::{
     rc::Rc,
 };
 
-// A wrapper to enforce coarse alignment on the buffer.
-#[repr(align(8))]
-struct AlignedBuffer<const N: usize> {
-    buffer: [u8; N],
-}
+use crate::{AlignedBuffer, VTable};
 
 // A wrapper for heap-allocated buffer with dynamic alignment.
 struct HeapBuffer {
@@ -223,9 +219,4 @@ impl<'a, T: 'a, const N: usize> State<'a, T, N> {
             Self::Heap { buffer, vtable }
         }
     }
-}
-
-struct VTable<T> {
-    poll: unsafe fn(*mut u8, cx: &mut Context<'_>) -> Poll<T>,
-    drop: unsafe fn(*mut u8),
 }

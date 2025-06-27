@@ -22,6 +22,8 @@ use std::{
     result::Result,
 };
 
+use crate::VTable;
+
 #[derive(Debug)]
 pub enum CreateError {
     SizeTooLarge { size: usize, max_size: usize },
@@ -142,12 +144,6 @@ struct StackFutureImpl<'a, T, const N: usize> {
     buffer: AlignedBuffer<N>,
     vtable: &'a VTable<T>,
     _pinned: PhantomPinned,
-}
-
-/// Vtable for type-erased future operations.
-struct VTable<T> {
-    poll: unsafe fn(*mut u8, cx: &mut Context<'_>) -> Poll<T>,
-    drop: unsafe fn(*mut u8),
 }
 
 impl<'a, T, const N: usize> StackFutureImpl<'a, T, N> {
