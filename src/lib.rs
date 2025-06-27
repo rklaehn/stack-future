@@ -1,3 +1,13 @@
+//! A stack-allocated future with a fixed-size, aligned buffer.
+//!
+//! Often you want to get rid of the concrete type of a future, but don't want to
+//! allocate on the heap.
+//!
+//! If you have an upper bound for the size of the future, you can use [`StackFuture`]
+//! to turn your future into a type-erased future that is allocated on the stack.
+//!
+//! Creating a [`StackFuture`] will fail if the future is too large or has
+//! too big alignment requirements.
 use core::{
     future::Future,
     mem::{align_of, size_of},
@@ -11,13 +21,9 @@ use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum CreateError {
-    #[snafu(display("Future size exceeds buffer capacity: {} > {}", size, max_size))]
+    #[snafu(display("Future size exceeds buffer capacity: {size} > {max_size}"))]
     SizeTooLarge { size: usize, max_size: usize },
-    #[snafu(display(
-        "Future alignment exceeds buffer alignment: {} > {}",
-        alignment,
-        expected
-    ))]
+    #[snafu(display("Future alignment exceeds buffer alignment: {alignment} > {expected}",))]
     AlignmentMismatch { alignment: usize, expected: usize },
 }
 
