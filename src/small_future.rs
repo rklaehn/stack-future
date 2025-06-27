@@ -7,6 +7,7 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
+    alloc::{Layout, alloc, dealloc},
     marker::{PhantomData, PhantomPinned},
     rc::Rc,
 };
@@ -16,6 +17,43 @@ use std::{
 struct AlignedBuffer<const N: usize> {
     buffer: [u8; N],
 }
+
+// A wrapper for heap-allocated buffer with dynamic alignment.
+struct HeapBuffer {
+    ptr: *mut u8,
+    layout: Layout,
+}
+
+impl HeapBuffer {
+    fn new<F>() -> Self {
+        let size = size_of::<F>();
+        let align = align_of::<F>();
+        let layout = Layout::from_size_align(size, align).unwrap();
+        let ptr = unsafe { alloc(layout) };
+        if ptr.is_null() {
+            panic!("Heap allocation failed");
+        }
+        unsafe {
+            ptr::write_bytes(ptr, 0, size);
+        }
+        Self { ptr, layout }
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+}
+
+impl Drop for HeapBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            dealloc(self.ptr, self.layout);
+        }
+    }
+}
+
+unsafe impl Send for HeapBuffer {}
+unsafe impl Sync for HeapBuffer {}
 
 /// A stack-allocated future that erases the concrete type, falling back to heap if needed.
 ///
@@ -56,7 +94,7 @@ impl<'a, T, const N: usize> Future for SmallFuture<'a, T, N> {
                 SmallFutureState::Inline { buffer, vtable } => {
                     (vtable.poll)(buffer.buffer.as_mut_ptr(), cx)
                 }
-                SmallFutureState::Heap(future) => future.as_mut().poll(cx),
+                SmallFutureState::Heap { buffer, vtable } => (vtable.poll)(buffer.as_mut_ptr(), cx),
             }
         }
     }
@@ -64,10 +102,13 @@ impl<'a, T, const N: usize> Future for SmallFuture<'a, T, N> {
 
 impl<'a, T, const N: usize> Drop for SmallFuture<'a, T, N> {
     fn drop(&mut self) {
-        if let SmallFutureState::Inline { buffer, vtable } = &mut self.0 {
-            unsafe {
+        match &mut self.0 {
+            SmallFutureState::Inline { buffer, vtable } => unsafe {
                 (vtable.drop)(buffer.buffer.as_mut_ptr());
-            }
+            },
+            SmallFutureState::Heap { buffer, vtable } => unsafe {
+                (vtable.drop)(buffer.as_mut_ptr());
+            },
         }
     }
 }
@@ -83,7 +124,7 @@ impl<'a, T, const N: usize> SmallFutureSend<'a, T, N> {
     /// Creates a new stack future from a concrete Send future.
     ///
     /// Uses stack allocation if the future fits and has compatible alignment; otherwise, falls back to heap.
-    pub fn new<F: Future<Output = T> + Send + Sync + 'a>(future: F) -> Self {
+    pub fn new<F: Future<Output = T> + Send + 'a>(future: F) -> Self {
         Self(SmallFutureSendState::new(future), PhantomPinned)
     }
 }
@@ -106,7 +147,9 @@ impl<'a, T, const N: usize> Future for SmallFutureSend<'a, T, N> {
                 SmallFutureSendState::Inline { buffer, vtable } => {
                     (vtable.poll)(buffer.buffer.as_mut_ptr(), cx)
                 }
-                SmallFutureSendState::Heap(future) => future.as_mut().poll(cx),
+                SmallFutureSendState::Heap { buffer, vtable } => {
+                    (vtable.poll)(buffer.as_mut_ptr(), cx)
+                }
             }
         }
     }
@@ -114,10 +157,13 @@ impl<'a, T, const N: usize> Future for SmallFutureSend<'a, T, N> {
 
 impl<'a, T, const N: usize> Drop for SmallFutureSend<'a, T, N> {
     fn drop(&mut self) {
-        if let SmallFutureSendState::Inline { buffer, vtable } = &mut self.0 {
-            unsafe {
+        match &mut self.0 {
+            SmallFutureSendState::Inline { buffer, vtable } => unsafe {
                 (vtable.drop)(buffer.buffer.as_mut_ptr());
-            }
+            },
+            SmallFutureSendState::Heap { buffer, vtable } => unsafe {
+                (vtable.drop)(buffer.as_mut_ptr());
+            },
         }
     }
 }
@@ -127,7 +173,10 @@ enum SmallFutureState<'a, T, const N: usize> {
         buffer: AlignedBuffer<N>,
         vtable: &'a VTable<T>,
     },
-    Heap(Pin<Box<dyn Future<Output = T> + 'a>>),
+    Heap {
+        buffer: HeapBuffer,
+        vtable: &'a VTable<T>,
+    },
 }
 
 enum SmallFutureSendState<'a, T, const N: usize> {
@@ -135,7 +184,10 @@ enum SmallFutureSendState<'a, T, const N: usize> {
         buffer: AlignedBuffer<N>,
         vtable: &'a VTable<T>,
     },
-    Heap(Pin<Box<dyn Future<Output = T> + Send + Sync + 'a>>),
+    Heap {
+        buffer: HeapBuffer,
+        vtable: &'a VTable<T>,
+    },
 }
 
 impl<'a, T: 'a, const N: usize> SmallFutureState<'a, T, N> {
@@ -156,13 +208,26 @@ impl<'a, T: 'a, const N: usize> SmallFutureState<'a, T, N> {
             }
             Self::Inline { buffer, vtable }
         } else {
-            Self::Heap(Box::pin(future))
+            let vtable = &VTable {
+                poll: |ptr, cx| {
+                    let future = unsafe { &mut *(ptr as *mut F) };
+                    unsafe { Pin::new_unchecked(future).poll(cx) }
+                },
+                drop: |ptr| {
+                    unsafe { ptr::drop_in_place(ptr as *mut F) };
+                },
+            };
+            let mut buffer = HeapBuffer::new::<F>();
+            unsafe {
+                ptr::write(buffer.as_mut_ptr() as *mut F, future);
+            }
+            Self::Heap { buffer, vtable }
         }
     }
 }
 
 impl<'a, T: 'a, const N: usize> SmallFutureSendState<'a, T, N> {
-    fn new<F: Future<Output = T> + Send + Sync + 'a>(future: F) -> Self {
+    fn new<F: Future<Output = T> + Send + 'a>(future: F) -> Self {
         if size_of::<F>() <= N && align_of::<F>() <= align_of::<AlignedBuffer<N>>() {
             let vtable = &VTable {
                 poll: |ptr, cx| {
@@ -179,7 +244,20 @@ impl<'a, T: 'a, const N: usize> SmallFutureSendState<'a, T, N> {
             }
             Self::Inline { buffer, vtable }
         } else {
-            Self::Heap(Box::pin(future))
+            let vtable = &VTable {
+                poll: |ptr, cx| {
+                    let future = unsafe { &mut *(ptr as *mut F) };
+                    unsafe { Pin::new_unchecked(future).poll(cx) }
+                },
+                drop: |ptr| {
+                    unsafe { ptr::drop_in_place(ptr as *mut F) };
+                },
+            };
+            let mut buffer = HeapBuffer::new::<F>();
+            unsafe {
+                ptr::write(buffer.as_mut_ptr() as *mut F, future);
+            }
+            Self::Heap { buffer, vtable }
         }
     }
 }
