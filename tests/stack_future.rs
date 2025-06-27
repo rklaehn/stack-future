@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use stack_future::{CreateError, StackFuture, StackFutureSend};
+use stack_future::{CreateError, LocalStackFuture, StackFuture};
 use static_assertions::{assert_impl_all, assert_not_impl_any};
 
 async fn simple() -> u64 {
@@ -35,32 +35,32 @@ async fn large_align() -> u64 {
 /// Tests that the wrapped futures work, and also that they fail if size or alignment is wrong.
 #[tokio::test]
 async fn smoke_test() {
-    let result = StackFuture::<_, 32>::new(simple()).unwrap().await;
+    let result = LocalStackFuture::<_, 32>::new(simple()).unwrap().await;
     assert_eq!(result, 42, "Unexpected result from StackFuture");
-    let result = StackFuture::<_, 256>::new(complex()).unwrap().await;
+    let result = LocalStackFuture::<_, 256>::new(complex()).unwrap().await;
     assert_eq!(result, 4950, "Unexpected result from StackFuture");
-    let res = StackFuture::<_, 16>::new(complex());
+    let res = LocalStackFuture::<_, 16>::new(complex());
     assert!(
         matches!(res, Err(CreateError::SizeTooLarge { .. })),
         "Expected error for too large future"
     );
-    let res = StackFuture::<_, 1024>::new(large_align());
+    let res = LocalStackFuture::<_, 1024>::new(large_align());
     assert!(
         matches!(res, Err(CreateError::AlignmentMismatch { .. })),
         "Expected error for misaligned future"
     );
 }
 
-static GLOBAL_TASK: OnceLock<StackFutureSend<'static, u64, 128>> = OnceLock::new();
+static GLOBAL_TASK: OnceLock<StackFuture<'static, u64, 128>> = OnceLock::new();
 
 /// Test that the the static lifetime future is properly captured.
 #[tokio::test]
 async fn static_future_test() {
-    let future = StackFutureSend::<_, 128>::new(simple()).unwrap();
+    let future = StackFuture::<_, 128>::new(simple()).unwrap();
     // This fails to compile with vtable: &'a VTable<T> because StackFuture<'static, i32, 128> is not 'static.
     GLOBAL_TASK.set(future).unwrap();
 }
 
-assert_not_impl_any!(StackFuture<'static, u64, 128>: Send, Unpin);
-assert_impl_all!(StackFutureSend<'static, u64, 128>: Send);
-assert_not_impl_any!(StackFutureSend<'static, u64, 128>: Unpin);
+assert_not_impl_any!(LocalStackFuture<'static, u64, 128>: Send, Unpin);
+assert_impl_all!(StackFuture<'static, u64, 128>: Send);
+assert_not_impl_any!(StackFuture<'static, u64, 128>: Unpin);

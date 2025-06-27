@@ -62,18 +62,18 @@ struct AlignedBuffer<const N: usize> {
 ///
 /// This is the non-Send version of the future.
 #[repr(transparent)]
-pub struct StackFuture<'a, T, const N: usize>(StackFutureImpl<'a, T, N>, PhantomData<Rc<()>>);
+pub struct LocalStackFuture<'a, T, const N: usize>(StackFutureImpl<'a, T, N>, PhantomData<Rc<()>>);
 
-impl<'a, T, const N: usize> fmt::Debug for StackFuture<'a, T, N> {
+impl<'a, T, const N: usize> fmt::Debug for LocalStackFuture<'a, T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StackFuture")
+        f.debug_struct("LocalStackFuture")
             .field("size", &size_of::<Self>())
             .field("alignment", &align_of::<Self>())
             .finish()
     }
 }
 
-impl<'a, T, const N: usize> StackFuture<'a, T, N> {
+impl<'a, T, const N: usize> LocalStackFuture<'a, T, N> {
     /// Creates a new stack future from a concrete future.
     ///
     /// Returns an error if the future is too large or has incompatible alignment.
@@ -88,7 +88,7 @@ impl<'a, T, const N: usize> StackFuture<'a, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> Future for StackFuture<'a, T, N> {
+impl<'a, T, const N: usize> Future for LocalStackFuture<'a, T, N> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -100,9 +100,9 @@ impl<'a, T, const N: usize> Future for StackFuture<'a, T, N> {
 ///
 /// This is the Send version of the future.
 #[repr(transparent)]
-pub struct StackFutureSend<'a, T, const N: usize>(StackFutureImpl<'a, T, N>);
+pub struct StackFuture<'a, T, const N: usize>(StackFutureImpl<'a, T, N>);
 
-impl<'a, T, const N: usize> std::fmt::Debug for StackFutureSend<'a, T, N> {
+impl<'a, T, const N: usize> std::fmt::Debug for StackFuture<'a, T, N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StackFutureSend")
             .field("size", &size_of::<Self>())
@@ -111,7 +111,7 @@ impl<'a, T, const N: usize> std::fmt::Debug for StackFutureSend<'a, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> StackFutureSend<'a, T, N> {
+impl<'a, T, const N: usize> StackFuture<'a, T, N> {
     /// Creates a new stack future from a concrete future.
     ///
     /// Returns an error if the future is too large or has incompatible alignment.
@@ -126,7 +126,7 @@ impl<'a, T, const N: usize> StackFutureSend<'a, T, N> {
     }
 }
 
-impl<'a, T, const N: usize> Future for StackFutureSend<'a, T, N> {
+impl<'a, T, const N: usize> Future for StackFuture<'a, T, N> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

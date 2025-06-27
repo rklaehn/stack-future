@@ -1,6 +1,6 @@
 use std::{pin::Pin, rc::Rc, sync::OnceLock};
 
-use stack_future::{SmallFuture, SmallFutureSend};
+use stack_future::{LocalSmallFuture, SmallFuture};
 use static_assertions::{assert_impl_all, assert_not_impl_any};
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -45,33 +45,33 @@ async fn non_send_future() -> u64 {
 }
 
 // Static assertions for trait implementations.
-assert_not_impl_any!(SmallFuture<'static, u64, 128>: Send, Unpin);
-assert_impl_all!(SmallFutureSend<'static, u64, 128>: Send);
-assert_not_impl_any!(SmallFutureSend<'static, u64, 128>: Unpin);
+assert_not_impl_any!(LocalSmallFuture<'static, u64, 128>: Send, Unpin);
+assert_impl_all!(SmallFuture<'static, u64, 128>: Send);
+assert_not_impl_any!(SmallFuture<'static, u64, 128>: Unpin);
 
 #[tokio::test]
 async fn smoke_test() {
     // Test inline storage.
-    let result = SmallFuture::<_, 32>::new(simple()).await;
+    let result = LocalSmallFuture::<_, 32>::new(simple()).await;
     assert_eq!(result, 42, "Unexpected result from SmallFuture inline");
-    let result = SmallFuture::<_, 256>::new(complex()).await;
+    let result = LocalSmallFuture::<_, 256>::new(complex()).await;
     assert_eq!(result, 4950, "Unexpected result from SmallFuture inline");
     // Test heap storage for large size.
-    let result = SmallFuture::<_, 16>::new(large_size()).await;
+    let result = LocalSmallFuture::<_, 16>::new(large_size()).await;
     assert_eq!(result, 42, "Unexpected result from SmallFuture heap");
     // Test heap storage for large alignment.
-    let result = SmallFuture::<_, 1024>::new(large_align()).await;
+    let result = LocalSmallFuture::<_, 1024>::new(large_align()).await;
     assert_eq!(result, 32640, "Unexpected result from SmallFuture heap");
     // Test non-Send future.
-    let result = SmallFuture::<_, 32>::new(non_send_future()).await;
+    let result = LocalSmallFuture::<_, 32>::new(non_send_future()).await;
     assert_eq!(result, 42, "Unexpected result from SmallFuture non-Send");
 }
 
-static GLOBAL_TASK: OnceLock<SmallFutureSend<'static, u64, 128>> = OnceLock::new();
+static GLOBAL_TASK: OnceLock<SmallFuture<'static, u64, 128>> = OnceLock::new();
 
 #[tokio::test]
 async fn static_future_test() {
-    let future = SmallFutureSend::<_, 128>::new(simple());
+    let future = SmallFuture::<_, 128>::new(simple());
     // Stores a SmallFutureSend in a 'static context, verifying compatibility with 'static futures.
     GLOBAL_TASK.set(future).unwrap();
 }
@@ -79,7 +79,7 @@ async fn static_future_test() {
 #[tokio::test]
 async fn test_boxing_for_unpin() {
     // Verify that boxing allows SmallFuture to work in Unpin-requiring contexts.
-    let future = SmallFutureSend::<u64, 128>::new(simple());
+    let future = SmallFuture::<u64, 128>::new(simple());
     let boxed: BoxFuture<u64> = Box::pin(future);
     assert_eq!(boxed.await, 42);
 }
